@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
+import CUSTOM.pretreatment as CUSTOM
 
 def imgs2pickle(img_groups: Tuple, output_path: Path, img_size: int = 64, verbose: bool = False, dataset='CASIAB') -> None:
     """Reads a group of images and saves the data in pickle format.
@@ -26,56 +27,73 @@ def imgs2pickle(img_groups: Tuple, output_path: Path, img_size: int = 64, verbos
     sinfo = img_groups[0]
     img_paths = img_groups[1]
     to_pickle = []
-    for img_file in sorted(img_paths):
-        if verbose:
-            logging.debug(f'Reading sid {sinfo[0]}, seq {sinfo[1]}, view {sinfo[2]} from {img_file}')
 
-        img = cv2.imread(str(img_file), cv2.IMREAD_GRAYSCALE)
-        
-        if dataset == 'GREW':
-            to_pickle.append(img.astype('uint8'))
-            continue
-
-        if img.sum() <= 10000:
+    if dataset == 'CUSTOM':
+        preprocessor = CUSTOM.Preprocessor(window=16, verbose=verbose)
+        for img_file in sorted(img_paths):
             if verbose:
-                logging.debug(f'Image sum: {img.sum()}')
-            logging.warning(f'{img_file} has no data.')
-            continue
+                logging.debug(f'Reading sid {sinfo[0]}, seq {sinfo[1]}, view {sinfo[2]} from {img_file}')
+            
+            img = cv2.imread(str(img_file), cv2.IMREAD_GRAYSCALE)
+            img = preprocessor.preprocess(img, img_size)
+            if img is not None:
+                to_pickle.append(img.astype('uint8'))
+                # save_img = img.astype('uint8')
+                # dst_path = os.path.join(output_path, *sinfo)
+                # os.makedirs(dst_path, exist_ok=True)
+                # cv2.imwrite(os.path.join(dst_path, os.path.basename(str(img_file))), save_img)
+    
+    else:
+        for img_file in sorted(img_paths):
+            if verbose:
+                logging.debug(f'Reading sid {sinfo[0]}, seq {sinfo[1]}, view {sinfo[2]} from {img_file}')
 
-        # Get the upper and lower points
-        y_sum = img.sum(axis=1)
-        y_top = (y_sum != 0).argmax(axis=0)
-        y_btm = (y_sum != 0).cumsum(axis=0).argmax(axis=0)
-        img = img[y_top: y_btm + 1, :]
+            img = cv2.imread(str(img_file), cv2.IMREAD_GRAYSCALE)
+            
+            if dataset == 'GREW':
+                to_pickle.append(img.astype('uint8'))
+                continue
 
-        # As the height of a person is larger than the width,
-        # use the height to calculate resize ratio.
-        ratio = img.shape[1] / img.shape[0]
-        img = cv2.resize(img, (int(img_size * ratio), img_size), interpolation=cv2.INTER_CUBIC)
+            if img.sum() <= 10000:
+                if verbose:
+                    logging.debug(f'Image sum: {img.sum()}')
+                logging.warning(f'{img_file} has no data.')
+                continue
 
-        # Get the median of the x-axis and take it as the person's x-center.
-        x_csum = img.sum(axis=0).cumsum()
-        x_center = None
-        for idx, csum in enumerate(x_csum):
-            if csum > img.sum() / 2:
-                x_center = idx
-                break
+            # Get the upper and lower points
+            y_sum = img.sum(axis=1)
+            y_top = (y_sum != 0).argmax(axis=0)
+            y_btm = (y_sum != 0).cumsum(axis=0).argmax(axis=0)
+            img = img[y_top: y_btm + 1, :]
 
-        if not x_center:
-            logging.warning(f'{img_file} has no center.')
-            continue
+            # As the height of a person is larger than the width,
+            # use the height to calculate resize ratio.
+            ratio = img.shape[1] / img.shape[0]
+            img = cv2.resize(img, (int(img_size * ratio), img_size), interpolation=cv2.INTER_CUBIC)
 
-        # Get the left and right points
-        half_width = img_size // 2
-        left = x_center - half_width
-        right = x_center + half_width
-        if left <= 0 or right >= img.shape[1]:
-            left += half_width
-            right += half_width
-            _ = np.zeros((img.shape[0], half_width))
-            img = np.concatenate([_, img, _], axis=1)
+            # Get the median of the x-axis and take it as the person's x-center.
+            x_csum = img.sum(axis=0).cumsum()
+            x_center = None
+            for idx, csum in enumerate(x_csum):
+                if csum > img.sum() / 2:
+                    x_center = idx
+                    break
 
-        to_pickle.append(img[:, left: right].astype('uint8'))
+            if not x_center:
+                logging.warning(f'{img_file} has no center.')
+                continue
+
+            # Get the left and right points
+            half_width = img_size // 2
+            left = x_center - half_width
+            right = x_center + half_width
+            if left <= 0 or right >= img.shape[1]:
+                left += half_width
+                right += half_width
+                _ = np.zeros((img.shape[0], half_width))
+                img = np.concatenate([_, img, _], axis=1)
+
+            to_pickle.append(img[:, left: right].astype('uint8'))
 
     if to_pickle:
         to_pickle = np.asarray(to_pickle)
