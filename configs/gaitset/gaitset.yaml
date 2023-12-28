@@ -1,9 +1,10 @@
 data_cfg:
   dataset_name: CASIA-B
-  dataset_root: your_path
+  dataset_root: /home/tiny/Downloads/MTP/silhouettes/data-360p-pickled
+  dataset_partition: ./datasets/CUSTOM/CUSTOM.json
   num_workers: 1
   remove_no_gallery: false
-  test_dataset_name: CASIA-B
+  test_dataset_name: CUSTOM
 
 evaluator_cfg:
   enable_float16: false

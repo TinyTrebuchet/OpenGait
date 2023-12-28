@@ -1,11 +1,10 @@
 data_cfg:
-  dataset_name: CASIA-B*
-  dataset_root: your_path
-  data_in_use: [false, true, true, true]
-  dataset_partition: ./datasets/CASIA-B/CASIA-B.json
+  dataset_name: CASIA-B
+  dataset_root: /home/tiny/Downloads/MTP/silhouettes/rdata-360p-pickled
+  dataset_partition: ./datasets/CUSTOM/CUSTOM.json
   num_workers: 1
   remove_no_gallery: false # Remove probe if no gallery for it
-  test_dataset_name: CASIA-B
+  test_dataset_name: CUSTOM
   cache: false
 
 evaluator_cfg:
@@ -14,7 +13,7 @@ evaluator_cfg:
   restore_hint: 20000
   save_name: GaitEdge
   sampler:
-    batch_size: 4
+    batch_size: 1
     sample_type: all_ordered
     type: InferenceSampler
     frames_all_limit: 512 # limit the number of sampled frames to prevent out of memory

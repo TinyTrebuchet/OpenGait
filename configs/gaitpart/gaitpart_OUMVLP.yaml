@@ -1,10 +1,10 @@
 data_cfg:
   dataset_name: OUMVLP
-  dataset_root: your_path
-  dataset_partition: ./datasets/OUMVLP/OUMVLP.json
+  dataset_root: /home/tiny/Downloads/MTP/silhouettes/rdata-360p-pickled
+  dataset_partition: /home/tiny/TinyRepo/OpenGait/datasets/CUSTOM/CUSTOM.json
   num_workers: 4
   remove_no_gallery: false
-  test_dataset_name: OUMVLP
+  test_dataset_name: CUSTOM
 
 evaluator_cfg:
   enable_float16: false

@@ -1,11 +1,11 @@
 data_cfg:
   dataset_name: CASIA-B
-  dataset_root: your_path
-  dataset_partition: ./datasets/CASIA-B/CASIA-B.json
+  dataset_root: /home/tiny/Downloads/MTP/silhouettes/rdata-360p-pickled
+  dataset_partition: ./datasets/CUSTOM/CUSTOM.json
   num_workers: 1
   cache: false
   remove_no_gallery: false
-  test_dataset_name: CASIA-B
+  test_dataset_name: CUSTOM
 
 evaluator_cfg:
   enable_distributed: true
