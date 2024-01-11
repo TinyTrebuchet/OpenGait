@@ -167,8 +167,18 @@ class BaseModel(MetaModel, nn.Module):
             self.scheduler = self.get_scheduler(cfgs['scheduler_cfg'])
         self.train(training)
         restore_hint = self.engine_cfg['restore_hint']
+
+        def setup_fine_tune():
+            if self.engine_cfg.get('fine_tune'):
+                self.fine_tune(cfgs['model_cfg'], self.engine_cfg['fine_tune'], self.device)
+
         if restore_hint != 0:
-            self.resume_ckpt(restore_hint)
+            if training:
+                self.resume_ckpt(restore_hint)
+                setup_fine_tune()
+            else:
+                setup_fine_tune()
+                self.resume_ckpt(restore_hint)
 
     def get_backbone(self, backbone_cfg):
         """Get the backbone of the model."""

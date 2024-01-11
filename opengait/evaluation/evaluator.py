@@ -75,12 +75,15 @@ def single_view_gallery_evaluation(feature, label, seq_type, view, dataset, metr
                                   'BG': ['H-scene2-bg-1', 'H-scene2-bg-2', 'L-scene2-bg-1', 'L-scene2-bg-2', 'H-scene3-bg-1', 'H-scene3-bg-2', 'L-scene3-bg-1', 'L-scene3-bg-2', 'H-scene3_s-bg-1', 'H-scene3_s-bg-2', 'L-scene3_s-bg-1', 'L-scene3_s-bg-2'],
                                   'CL': ['H-scene2-cl-1', 'H-scene2-cl-2', 'L-scene2-cl-1', 'L-scene2-cl-2', 'H-scene3-cl-1', 'H-scene3-cl-2', 'L-scene3-cl-1', 'L-scene3-cl-2', 'H-scene3_s-cl-1', 'H-scene3_s-cl-2', 'L-scene3_s-cl-1', 'L-scene3_s-cl-2']
                                   },
-                      'SUSTech1K': {'Normal': ['01-nm'], 'Bag': ['bg'], 'Clothing': ['cl'], 'Carrying':['cr'], 'Umberalla': ['ub'], 'Uniform': ['uf'], 'Occlusion': ['oc'],'Night': ['nt'], 'Overall': ['01','02','03','04']}
+                      'SUSTech1K': {'Normal': ['01-nm'], 'Bag': ['bg'], 'Clothing': ['cl'], 'Carrying':['cr'], 'Umberalla': ['ub'], 'Uniform': ['uf'], 'Occlusion': ['oc'],'Night': ['nt'], 'Overall': ['01','02','03','04']},
+                      'DroneGait': {'1': ['1'], '2': ['2']}
                       }
     gallery_seq_dict = {'CASIA-B': ['nm-01', 'nm-02', 'nm-03', 'nm-04'],
                         'OUMVLP': ['01'],
                         'CASIA-E': ['H-scene1-nm-1', 'H-scene1-nm-2', 'L-scene1-nm-1', 'L-scene1-nm-2'],
-                        'SUSTech1K': ['00-nm'],}
+                        'SUSTech1K': ['00-nm'],
+                        'DroneGait': ['1']
+                        }
     msg_mgr = get_msg_mgr()
     acc = {}
     view_list = sorted(np.unique(view))
@@ -118,9 +121,11 @@ def single_view_gallery_evaluation(feature, label, seq_type, view, dataset, metr
     result_dict = {}
     msg_mgr.log_info('===Rank-1 (Exclude identical-view cases)===')
     out_str = ""
+    msg_mgr.log_info(f'Views: {view_list}')
     for rank in range(num_rank):
         out_str = ""
         for type_ in probe_seq_dict[dataset].keys():
+            msg_mgr.log_info(f'{type_}@R{rank+1}: \n{acc[type_][:,:,rank]}')
             sub_acc = de_diag(acc[type_][:,:,rank], each_angle=True)
             if rank == 0:
                 msg_mgr.log_info(f'{type_}@R{rank+1}: {sub_acc}')
