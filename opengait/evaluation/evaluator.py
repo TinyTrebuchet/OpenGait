@@ -140,7 +140,7 @@ def evaluate_indoor_dataset(data, dataset, metric='euc', cross_view_gallery=Fals
     label = np.array(label)
     view = np.array(view)
 
-    if dataset not in ('CASIA-B', 'OUMVLP', 'CASIA-E', 'SUSTech1K'):
+    if dataset not in ('CASIA-B', 'OUMVLP', 'CASIA-E', 'SUSTech1K', 'DroneGait'):
         raise KeyError("DataSet %s hasn't been supported !" % dataset)
     if cross_view_gallery:
         return cross_view_gallery_evaluation(

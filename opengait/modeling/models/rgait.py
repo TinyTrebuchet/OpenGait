@@ -9,80 +9,113 @@ import torch.nn.functional as F
 from ..base_model import BaseModel
 from ..modules import SeparateBNNecks
 
-max_frames_num = 256
-max_contour_len = 512
+max_frames_num = 128
+max_contour_len = 128
+
+def np2t(arr, device):
+    t = torch.from_numpy(arr)
+    return t.to(device=torch.device('cuda', device))
 
 class FeatureExtractor():
 
-    def __init__(self, extra_feats=[], max_contour_len=512):
-        self.feature_dim = 2
-        assert self.feature_dim == len(extra_feats) + 2, f"Feature dimension mismatch. Expected {self.feature_dim} but got {len(extra_feats) + 2}"
+    def __init__(self, max_contour_len=512):
         self.max_contour_len = max_contour_len
 
-    def _extract_contour_from_img(self, img):
+    # resize arr to give size along given axis by trimming or padding
+    # returns resized array & padding mask
+    def _resize(self, arr, sz, axis=0):
+        batch, og_sz, feat = arr.shape[:axis], arr.shape[axis], arr.shape[axis+1:]
+        pad_mask = np.zeros((*batch, sz), dtype=bool)
+        if arr.shape[axis] >= sz:
+            resized_arr = np.take(arr, range(sz), axis=axis)
+            return resized_arr, pad_mask
+        else:
+            padding_len = sz - og_sz
+            padding = np.zeros((*batch, padding_len, *feat))
+            resized_arr = np.append(arr, padding, axis=axis)
+            assert resized_arr.shape == (*batch, sz, *feat), "Sanity check!"
+            pad_mask[..., -padding_len:] = True
+            return resized_arr, pad_mask
+
+    def _extract_sil_contour(self, img, step=1):
         # extract biggest outermost contour 
+        img = img.astype('uint8')
         contours, hierarchy = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        biggest_contour_idx = np.argmax([contour.size for contour in contours])
-        contour = contours[biggest_contour_idx].squeeze()
-
-        # reverse each point as (y,x) -> (x,y) and pad to max_contour_len
-        contour = np.flip(contour.squeeze(), axis=1)
-        num_padding =  self.max_contour_len - contour.shape[0]
-        padding = np.zeros((num_padding, *contour.shape[1:]))
-        contour_padded = np.vstack((contour, padding))
-
-        # generate padding mask
-        padding_mask = np.zeros(num_padding, dtype=bool)
-        padding_mask[-num_padding:] = True
-
-        return contour_padded, padding_mask
-
-    def __call__(self, sils):
-        b, s, h, w = sils.size()
-        # extract features & generate padding mask
-        feats = torch.empty((b, s, self.max_contour_len, self.feature_dim))
-        pad_mask = torch.zeros((b, s, self.max_contour_len), dtype=torch.bool)
+        if len(contours) > 0:
+            biggest_contour_idx = np.argmax([contour.size for contour in contours])
+            contour = contours[biggest_contour_idx].squeeze()
+            if contour.ndim < 2: # squeeze() drops the first axis if only 1 contour point exists
+                contour = np.expand_dims(contour, axis=0)
+            contour = np.flip(contour[::step], axis=-1) # flip coords from (y,x) to (x,y)
+        else:
+            contour = np.empty((0,2))
+        assert contour.ndim == 2 and contour.shape[-1] == 2, f"Invalid contour shape recieved {contour.shape}"
+        return self._resize(contour, self.max_contour_len, axis=0)
+    
+    def extract_sils_contour(self, sils, step=1):
+        b, s, h, w = sils.shape
+        contours = np.empty((b,s,self.max_contour_len,2), dtype=sils.dtype)
+        pad_masks = np.empty((b,s,self.max_contour_len), dtype=bool)
         for bi in range(b):
             for si in range(s):
-                contour, pad_submask = self._extract_contour_from_img(sils[bi][si])
-                feats[bi][si] = torch.from_numpy(contour)
-                pad_mask[bi][si] = torch.from_numpy(pad_submask)
-        return feats, pad_mask
+                contours[bi][si], pad_masks[bi][si] = self._extract_sil_contour(sils[bi][si], step)
+        return (contours, pad_masks)
+
+    def extract_local_feats(self, sils, contours=None):
+        centroids = np.expand_dims(np.mean(contours, axis=-2), axis=-2)
+        dists = np.sqrt(np.square(contours - centroids).sum(axis=-1, keepdims=True))
+        return np.concatenate((contours, dists), axis=-1)
+
+    def extract_global_feats(self, sils, contours=None):
+        bin_sils = (sils > 0).astype(sils.dtype)   # b s h w
+
+        centroids = np.mean(contours, axis=-2)
+        areas = np.expand_dims(bin_sils.sum(axis=(-1,-2)), axis=-1)
+        
+        wcs, hcs = np.cumsum(bin_sils, axis=-1), np.cumsum(bin_sils, axis=-2)
+        left = wcs.argmin(axis=-1).min(axis=-1, keepdims=True)
+        right = wcs.argmax(axis=-1).max(axis=-1, keepdims=True)
+        top = hcs.argmin(axis=-2).min(axis=-1, keepdims=True)
+        bottom = hcs.argmax(axis=-2).max(axis=-1, keepdims=True)
+        height, width = (bottom - top).astype(sils.dtype), (right - left).astype(sils.dtype)
+
+        return np.concatenate((centroids, areas, height, width), axis=-1)
+    
+    def __call__(self, sils, local_step=1):
+        contours, pad_masks = self.extract_sils_contour(sils, step=2)
+        local_feats = self.extract_local_feats(sils, contours)
+        global_feats = self.extract_global_feats(sils, contours)
+        return (local_feats, global_feats, pad_masks)
 
 
-class FactorizedEncoder(nn.Module):
-    def __init__(self, d_model, num_layers, nhead, dim_feedforward=2048):
-        super(FactorizedEncoder, self).__init__()
+class Encoder(nn.Module):
+    def __init__(self, d_model, num_layers, nhead, dim_feedforward=2048, seq_maxlen=256):
+        super(Encoder, self).__init__()
 
         self.d_model = d_model
 
-        self.spatial_pos_embedding = nn.Embedding(max_contour_len+1, d_model)
-        self.temporal_pos_embedding = nn.Embedding(max_frames_num+1, d_model)
-
-        self.spatial_cls_token = nn.Parameter(torch.randn(d_model))
-        self.temporal_cls_token = nn.Parameter(torch.randn(d_model))
+        self.cls_token = nn.Parameter(torch.randn(d_model))
+        self.register_buffer('cls_pad_mask', torch.tensor([False]))
+        self.pos_embedding = nn.Parameter(torch.randn(seq_maxlen+1, d_model))
 
         encoder_layer = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, norm_first=True, batch_first=True)
-        self.spatial_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
-        self.temporal_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers)
 
-    def forward(self, x, contour_pad_mask):
-        b, s, c, d = x.size()
+    def forward(self, x, pad_mask=None):
+        batch, seq_len, d = x.size()[:-2], x.size(-2), x.size(-1)
         assert (d == self.d_model), f"Input dimension mismatch (d_model). Expected {self.d_model} but got {d}"
 
-        spatial_cls_tokens = self.spatial_cls_token.expand((b, s, 1, d))
-        x = torch.cat((spatial_cls_tokens, x), dim=2)
-        x += self.spatial_pos_embedding[:(c+1)]
+        cls_tokens = self.cls_token.expand((*batch, 1, d))
+        x = torch.cat((cls_tokens, x), dim=-2)
+        x = x.reshape((-1, seq_len+1, d))
 
-        x = rearrange(x, 'b s c d -> (b s) c d')
-        x = self.spatial_encoder(x)[:,0]
-        x = rearrange(x[:,0], '(b s) d -> b s d', b=b)
+        if pad_mask is not None:
+            pad_mask = torch.cat((self.cls_pad_mask.expand(*batch, 1), pad_mask), dim=-1)
+            pad_mask = pad_mask.reshape((-1, seq_len+1))
 
-        temporal_cls_tokens = self.temporal_cls_token.expand((b, 1, d))
-        x = torch.cat((temporal_cls_tokens, x), dim=1)
-        x += self.temporal_pos_embedding[:(s+1)]
-
-        x = self.temporal_encoder(x)[:,0]
+        x += self.pos_embedding[:(seq_len+1)]
+        x = self.encoder(x, src_key_padding_mask=pad_mask)[:,0]
+        x = x.reshape((*batch,d))
 
         return x
 
@@ -96,14 +129,24 @@ class RGait(BaseModel):
         in_c = model_cfg['channels']
         class_num = model_cfg['class_num']
 
-        self.FeatureExtractor = FeatureExtractor(extra_feats=[], max_contour_len=max_contour_len)
+        self.FeatureExtractor = FeatureExtractor(max_contour_len)
 
-        self.Linear1 = nn.Linear(in_c[0], in_c[1])
+        self.LinearLocal = nn.Linear(3, in_c[0])
+        self.LinearGlobal = nn.Linear(5, in_c[0])
+        self.LinearGL = nn.Linear(in_c[0]*2, in_c[1])
+
         # ViT-Lite : https://arxiv.org/pdf/2104.05704.pdf
-        self.FactorizedEncoder = FactorizedEncoder(d_model=in_c[1], 
-                                                   num_layers=model_cfg['num_layers'], 
-                                                   nhead=model_cfg['num_head'], 
-                                                   dim_feedforward=model_cfg['dim_feedforward'])
+        self.SpatialEncoder = Encoder(d_model=in_c[0], 
+                                      num_layers=model_cfg['num_layers'], 
+                                      nhead=model_cfg['num_head'], 
+                                      dim_feedforward=model_cfg['dim_feedforward'],
+                                      seq_maxlen=max_contour_len)
+
+        self.TemporalEncoder = Encoder(d_model=in_c[1],
+                                       num_layers=model_cfg['num_layers'], 
+                                       nhead=model_cfg['num_head'], 
+                                       dim_feedforward=model_cfg['dim_feedforward'],
+                                       seq_maxlen=max_frames_num)
         
         self.Head0 = nn.Linear(in_c[1], in_c[2])
 
@@ -118,17 +161,26 @@ class RGait(BaseModel):
     def forward(self, inputs):
         ipts, labs, _, _, seqL = inputs
         sils = ipts[0]
+        n, s, h, w = sils.size()
         del ipts
 
+        sils = sils.detach().cpu()
         with torch.no_grad():
-            feats, pad_mask = self.FeatureExtractor(sils)
-            feats = feats.to(device=torch.device("cuda", self.device))
-            pad_mask = pad_mask.to(device=torch.device("cuda", self.device))
-        del sils
+            feats = self.FeatureExtractor(sils.numpy())
 
-        outs = self.Linear1(feats)
-        outs = self.FactorizedEncoder(outs)
-        gait = self.Head0(outs)
+        local_feats = np2t(feats[0], self.device)
+        global_feats = np2t(feats[1], self.device)
+        pad_masks = np2t(feats[2], self.device)
+
+        local_feats = self.LinearLocal(local_feats)
+        local_feats_embed = self.SpatialEncoder(local_feats, pad_masks)
+
+        global_feats = self.LinearGlobal(global_feats)
+        gl_feats = torch.cat((global_feats, local_feats_embed), dim=-1)
+        gl_feats = self.LinearGL(gl_feats)
+        gl_feats_embed = self.TemporalEncoder(gl_feats)
+
+        gait = self.Head0(gl_feats_embed)
 
         if self.BN_head:    # Original Head
             bnft = self.Bn(gait)
@@ -137,8 +189,10 @@ class RGait(BaseModel):
         else:               # BNNeck as Head
             bnft, logi = self.BNNecks(gait)
             embed = gait
+
+        logi = logi.unsqueeze(2)
+        embed = embed.unsqueeze(2)
         
-        n, _, s, h, w = sils.size()
         retval = {
             'training_feat': {
                 'triplet': {'embeddings': embed, 'labels': labs},

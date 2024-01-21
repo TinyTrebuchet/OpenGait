@@ -70,4 +70,4 @@ trainer_cfg:
     sample_type: fixed_unordered
     type: TripletSampler
   transform:
-      - type: BaseSilCuttingTransform
+      - type: BaseSilTransform

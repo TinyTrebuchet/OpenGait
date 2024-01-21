@@ -1,7 +1,7 @@
 # Note  : *** the batch_size should be equal to the gpus number at the test phase!!! ***
 data_cfg:
   dataset_name: DroneGait
-  dataset_root: your_path
+  dataset_root: /home/ub/DroneGait/silhouettes/cafp.bak
   dataset_partition: ./datasets/DroneGait/DroneGait.json
   num_workers: 1
   remove_no_gallery: false
@@ -10,8 +10,8 @@ data_cfg:
 evaluator_cfg:
   enable_float16: false 
   restore_ckpt_strict: true
-  restore_hint: 60000
-  save_name: RGait
+  restore_hint: 10000
+  save_name: RGait3
   sampler:
     batch_size: 1
     sample_type: all_ordered
@@ -31,11 +31,11 @@ loss_cfg:
 
 model_cfg:
   model: RGait
-  channels: [2, 64, 128]
-  num_layers: 6
-  num_head: 4
+  channels: [64, 128, 128]
+  num_layers: 8
+  num_head: 8
   dim_feedforward: 1024
-  class_num: 74
+  class_num: 21
 
 optimizer_cfg:
   lr: 3.0e-4
@@ -45,7 +45,7 @@ optimizer_cfg:
 scheduler_cfg:
   gamma: 0.1
   milestones:
-    - 50000
+    - 40000
   scheduler: MultiStepLR
 
 trainer_cfg:
@@ -55,14 +55,14 @@ trainer_cfg:
   restore_ckpt_strict: true
   restore_hint: 0
   save_iter: 10000
-  save_name: RGait
+  save_name: RGait3
   sync_BN: true
-  total_iter: 60000
+  total_iter: 50000
   sampler:
     batch_shuffle: true
     batch_size:
-      - 8
-      - 8
+      - 4
+      - 4
     frames_num_fixed: 30
     frames_skip_num: 0
     sample_type: fixed_ordered
